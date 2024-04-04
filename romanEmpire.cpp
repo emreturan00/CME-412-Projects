@@ -1,103 +1,257 @@
-#include <iostream>
-#include <random>
+﻿#include <iostream>
 #include <vector>
+#include <random>
 #include <algorithm>
+#include <numeric>
 
-// Parameters
-const int NUM_YEARS_SIMULATION = 50;
-const int NUM_QUAESTORS = 20;
-const int NUM_AEDILES = 10;
-const int NUM_PRAETORS = 8;
-const int NUM_CONSULS = 2;
-const int MIN_AGE_QUAESTOR = 30;
-const int MIN_AGE_AEDILE = 36;
-const int MIN_AGE_PRAETOR = 39;
-const int MIN_AGE_CONSUL = 42;
-const int REELECTION_INTERVAL_CONSUL = 10;
-const int LIFE_EXPECTANCY_MEAN = 55;
-const int LIFE_EXPECTANCY_STDDEV = 10;
-const int LIFE_EXPECTANCY_MIN = 25;
-const int LIFE_EXPECTANCY_MAX = 80;
-const int NEW_CANDIDATES_MEAN = 15;
-const int NEW_CANDIDATES_STDDEV = 5;
-const int INITIAL_PSI = 100;
-const int PSI_PENALTY_UNFILLED = 5;
-const int PSI_PENALTY_REELECTED = 10;
+enum class Office { QUAESTOR, AEDILE, PRAETOR, CONSUL };
 
-// Function to generate truncated normal distribution
-int truncated_normal(int mean, int stddev, int min_val, int max_val) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::normal_distribution<double> dist(mean, stddev);
+class Politician {
+public:
+    int age;
+    int yearsInOffice;
+    Office heldOffice;
 
-    while (true) {
-        int val = static_cast<int>(dist(gen));
-        if (val >= min_val && val <= max_val)
-            return val;
+    Politician(int initialAge, Office office) : age(initialAge), yearsInOffice(0), heldOffice(office) {}
+};
+
+class Simulation {
+private:
+    std::vector<Politician> politicians;
+    int PSI; 
+    int year;
+
+     int MIN_QUAESTOR_AGE = 30;
+     int MIN_AEDILE_AGE = 36;
+     int MIN_PRAETOR_AGE = 39;
+     int MIN_CONSUL_AGE = 42;
+     int MIN_REELECTION_INTERVAL = 10;
+
+     int NUM_QUAESTORS = 20;
+     int NUM_AEDILES = 10;
+     int NUM_PRAETORS = 8;
+     int NUM_CONSULS = 2;
+
+     int STARTING_PSI = 100;
+     int UNFILLED_POSITION_PENALTY = 5;
+     int REELECTION_PENALTY = 10;
+
+    std::default_random_engine generator;
+    std::normal_distribution<double> ageDistribution;
+
+public:
+    Simulation() : PSI(STARTING_PSI), year(0), generator(std::random_device{}()),
+        ageDistribution(55.0, 10.0) {}
+
+    void run(int numYears) {
+        initialize();
+
+        for (int i = 0; i < numYears; ++i) {
+            simulateYear();
+            updatePSI();
+            ++year;
+        }
     }
-}
 
-// Function to simulate elections
-int simulate_elections(int available_positions, int num_candidates) {
-    if (available_positions >= num_candidates)
-        return num_candidates;
-    else
-        return available_positions;
-}
+    void initialize() {
+        politicians.clear();
+        year = 0;
+        PSI = STARTING_PSI;
 
-int main() {
-    std::vector<int> ages = { 0 }; // Ages of politicians
-    int psi = INITIAL_PSI; // Political Stability Index
-    std::vector<int> office_fill_rates = { 0, 0, 0, 0 }; // Quaestor, Aedile, Praetor, Consul
+        for (int i = 0; i < NUM_QUAESTORS; ++i)
+            politicians.emplace_back(MIN_QUAESTOR_AGE, Office::QUAESTOR);
+    }
 
-    // Simulation loop
-    for (int year = 1; year <= NUM_YEARS_SIMULATION; ++year) {
-        // Generate new candidates
-        int num_new_candidates = truncated_normal(NEW_CANDIDATES_MEAN, NEW_CANDIDATES_STDDEV, 0, INT_MAX);
-        int new_quaestors = simulate_elections(NUM_QUAESTORS, num_new_candidates);
-        int new_aediles = simulate_elections(NUM_AEDILES, num_new_candidates - new_quaestors);
-        int new_praetors = simulate_elections(NUM_PRAETORS, num_new_candidates - new_quaestors - new_aediles);
-        int new_consuls = simulate_elections(NUM_CONSULS, num_new_candidates - new_quaestors - new_aediles - new_praetors);
-
-        // Update office fill rates
-        office_fill_rates[0] += new_quaestors;
-        office_fill_rates[1] += new_aediles;
-        office_fill_rates[2] += new_praetors;
-        office_fill_rates[3] += new_consuls;
-
-        // Age politicians and remove those surpassing life expectancy
-        for (auto& age : ages) {
-            age++;
-            if (age > truncated_normal(LIFE_EXPECTANCY_MEAN, LIFE_EXPECTANCY_STDDEV, LIFE_EXPECTANCY_MIN, LIFE_EXPECTANCY_MAX)) {
-                age = -1; // Mark for removal
+    void simulateYear() {
+        for (auto& politician : politicians) {
+            ++politician.age;
+            if (politician.age > calculateLifeExpectancy()) {
+                politicians.erase(std::remove_if(politicians.begin(), politicians.end(),
+                    [&](Politician& p) { return p.age > calculateLifeExpectancy(); }),
+                    politicians.end());
+                break;
             }
         }
-        ages.erase(std::remove(ages.begin(), ages.end(), -1), ages.end());
 
-        // Update PSI based on office fill rates and re-election penalties
-        psi -= PSI_PENALTY_UNFILLED * (NUM_QUAESTORS - new_quaestors);
-        psi -= PSI_PENALTY_UNFILLED * (NUM_AEDILES - new_aediles);
-        psi -= PSI_PENALTY_UNFILLED * (NUM_PRAETORS - new_praetors);
-        psi -= PSI_PENALTY_UNFILLED * (NUM_CONSULS - new_consuls);
-        if (new_consuls > 0) {
-            psi -= PSI_PENALTY_REELECTED * std::count(ages.begin(), ages.end(), MIN_AGE_CONSUL);
+        electOfficials(Office::CONSUL);
+        electOfficials(Office::PRAETOR);
+        electOfficials(Office::AEDILE);
+        electOfficials(Office::QUAESTOR);
+
+        int numNewCandidates = static_cast<int>(ageDistribution(generator));
+        politicians.reserve(politicians.size() + numNewCandidates);
+        for (int i = 0; i < numNewCandidates; ++i)
+            politicians.emplace_back(MIN_QUAESTOR_AGE, Office::QUAESTOR);
+    }
+    int minimumAgeForOffice(Office office) {
+        switch (office) {
+        case Office::CONSUL:
+            return MIN_CONSUL_AGE;
+        case Office::PRAETOR:
+            return MIN_PRAETOR_AGE;
+        case Office::AEDILE:
+            return MIN_AEDILE_AGE;
+        case Office::QUAESTOR:
+            return MIN_QUAESTOR_AGE;
+        }
+        return 0;
+    }
+
+
+    void electOfficials(Office office) {
+        int numPositions = 0;
+        switch (office) {
+        case Office::CONSUL:
+            numPositions = NUM_CONSULS;
+            break;
+        case Office::PRAETOR:
+            numPositions = NUM_PRAETORS;
+            break;
+        case Office::AEDILE:
+            numPositions = NUM_AEDILES;
+            break;
+        case Office::QUAESTOR:
+            numPositions = NUM_QUAESTORS;
+            break;
+        }
+
+        int numFilledPositions = 0;
+        for (auto& politician : politicians) {
+            if (politician.heldOffice == Office::QUAESTOR && politician.yearsInOffice == 0 &&
+                politician.age >= minimumAgeForOffice(office)) {
+                politician.heldOffice = office;
+                politician.yearsInOffice = 1;
+                ++numFilledPositions;
+            }
+
+            if (numFilledPositions >= numPositions)
+                break;
+        }
+
+        if (numFilledPositions < numPositions)
+            PSI -= (numPositions - numFilledPositions) * UNFILLED_POSITION_PENALTY;
+    }
+
+
+    void updatePSI() {
+        if (year > MIN_REELECTION_INTERVAL) {
+            int numConsuls = 0;
+            for ( auto& politician : politicians) {
+                if (politician.heldOffice == Office::CONSUL)
+                    ++numConsuls;
+            }
+            if (numConsuls > 2) 
+                PSI -= (numConsuls - 2) * REELECTION_PENALTY;
         }
     }
 
-    // Calculate final office fill rates
-    double total_positions = NUM_QUAESTORS + NUM_AEDILES + NUM_PRAETORS + NUM_CONSULS;
-    std::vector<double> final_fill_rates;
-    for (int rate : office_fill_rates) {
-        final_fill_rates.push_back((rate / total_positions) * 100);
+    int calculateLifeExpectancy() {
+        double mu = 55.0, sigma = 10.0, a = 25.0, b = 80.0;
+        double Z = (a - mu) / sigma;
+        double Phi_a = 0.5 * (1 + erf(Z / sqrt(2)));
+        Z = (b - mu) / sigma;
+        double Phi_b = 0.5 * (1 + erf(Z / sqrt(2)));
+
+        std::uniform_real_distribution<double> uniform(Phi_a, Phi_b);
+        double U = uniform(generator);
+
+        double X = mu + sigma * sqrt(2) * erfinv(2 * U - 1);
+
+        return static_cast<int>(X);
     }
 
-    // Output results
-    std::cout << "End-of-Simulation PSI: " << psi << std::endl;
-    std::cout << "Annual Fill Rate:" << std::endl;
-    std::cout << "  Quaestor: " << final_fill_rates[0] << "%" << std::endl;
-    std::cout << "  Aedile: " << final_fill_rates[1] << "%" << std::endl;
-    std::cout << "  Praetor: " << final_fill_rates[2] << "%" << std::endl;
-    std::cout << "  Consul: " << final_fill_rates[3] << "%" << std::endl;
+    double erfinv(double x) {
+        double sgn = (x < 0) ? -1 : 1;
+        x = (1 - x) * (1 + x);
+        double lnx = log(x);
+        double tt1 = 2 / (3.14159265359 * 0.147) + 0.5 * lnx;
+        double tt2 = 1 / 0.147 * lnx;
+
+        return sgn * sqrt(-tt1 + sqrt(tt1 * tt1 - tt2));
+    }
+
+    void printResults() {
+        int numQuaestors = 0, numAediles = 0, numPraetors = 0, numConsuls = 0;
+        for (auto& politician : politicians) {
+            switch (politician.heldOffice) {
+            case Office::QUAESTOR:
+                ++numQuaestors;
+                break;
+            case Office::AEDILE:
+                ++numAediles;
+                break;
+            case Office::PRAETOR:
+                ++numPraetors;
+                break;
+            case Office::CONSUL:
+                ++numConsuls;
+                break;
+            }
+        }
+
+        double totalPoliticians = politicians.size();
+        double quaestorFillRate = (numQuaestors / totalPoliticians) * 100;
+        double aedileFillRate = (numAediles / totalPoliticians) * 100;
+        double praetorFillRate = (numPraetors / totalPoliticians) * 100;
+        double consulFillRate = (numConsuls / totalPoliticians) * 100;
+
+        std::vector<int> quaestorAges, aedileAges, praetorAges, consulAges;
+        for (auto& politician : politicians) {
+            switch (politician.heldOffice) {
+            case Office::QUAESTOR:
+                quaestorAges.push_back(politician.age);
+                break;
+            case Office::AEDILE:
+                aedileAges.push_back(politician.age);
+                break;
+            case Office::PRAETOR:
+                praetorAges.push_back(politician.age);
+                break;
+            case Office::CONSUL:
+                consulAges.push_back(politician.age);
+                break;
+            }
+        }
+
+        std::cout << "End-of-Simulation PSI: " << PSI << std::endl;
+        std::cout << "Annual Fill Rate:\n";
+        std::cout << "Quaestor: " << quaestorFillRate << "%\n";
+        std::cout << "Aedile: " << aedileFillRate << "%\n";
+        std::cout << "Praetor: " << praetorFillRate << "%\n";
+        std::cout << "Consul: " << consulFillRate << "%\n";
+        std::cout << "Age Distribution:\n";
+        std::cout << "Quaestor: ";
+        printAgeDistribution(quaestorAges);
+        std::cout << "Aedile: ";
+        printAgeDistribution(aedileAges);
+        std::cout << "Praetor: ";
+        printAgeDistribution(praetorAges);
+        std::cout << "Consul: ";
+        printAgeDistribution(consulAges);
+       
+    }
+
+    void printAgeDistribution( std::vector<int>& ages) {
+        if (ages.empty()) {
+            std::cout << "No politicians\n";
+            return;
+        }
+
+        std::sort(ages.begin(), ages.end());
+        int minAge = ages.front();
+        int maxAge = ages.back();
+        int medianAge = ages[ages.size() / 2];
+        double meanAge = static_cast<double>(std::accumulate(ages.begin(), ages.end(), 0)) / ages.size();
+
+        std::cout << "Min: " << minAge << ", Max: " << maxAge << ", Median: " << medianAge << ", Mean: " << meanAge
+            << std::endl;
+    }
+};
+
+int main() {
+    Simulation simulation;
+    simulation.run(200);
+    simulation.printResults();
 
     return 0;
 }
