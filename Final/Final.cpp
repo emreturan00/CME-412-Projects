@@ -1,3 +1,17 @@
+
+
+//Author : Emre Turan - 20191709010
+
+// This program simulates a manufacturing process with multiple stages. 
+// The process consists of raw material handling, machining, assembly, quality control, and packaging stages. 
+// The simulation includes machine failures and maintenance events. The simulation runs for a fixed time duration (MAX_TIME) 
+// and schedules events based on the current time and the type of event. The simulation uses a priority queue to store events 
+// and processes events in order of their scheduled time. The simulation generates random times for each stage based on normal 
+// distributions with mean and standard deviation values. The simulation also schedules machine failures and maintenance events 
+// based on exponential distributions. 
+// The simulation outputs log messages for each event type and the time at which the event occurs.
+
+
 #include <iostream>
 #include <queue>
 #include <random>
